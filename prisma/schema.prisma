@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  username           String   @unique
+  email              String   @unique
+  password           String
+  full_name          String?
+  avatar_url         String?
+  cover_photo_url    String?
+  image              String?   // nuevo campo para imagen predeterminada o adicional
+  hasStatus          Boolean?  // nuevo campo para status
+  isOnline           Boolean?  // si está online
+  lastConnection     DateTime? // fecha última conexión
+  note               String?   // nota personal
+  created_at         DateTime  @default(now())
+  posts              Post[]
+  comments           Comment[]
+  likes              Like[]
+  friendshipsSent     Friendship[] @relation("Requesters")
+  friendshipsReceived Friendship[] @relation("Addressees")
+}
+
+
+model Post {
+  id           Int      @id @default(autoincrement())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       Int
+  text_content String?
+  media_url    String?
+  media_type   String?  @default("text")
+  created_at   DateTime @default(now())
+
+  comments     Comment[]
+  likes        Like[]
+}
+
+model Comment {
+  id         Int      @id @default(autoincrement())
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+  content    String
+  media_url  String?
+  created_at DateTime @default(now())
+}
+
+model Like {
+  id         Int      @id @default(autoincrement())
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+  created_at DateTime @default(now())
+
+  @@unique([userId, postId])
+}
+
+model Friendship {
+  id          Int      @id @default(autoincrement())
+  requester   User     @relation("Requesters", fields: [requesterId], references: [id], onDelete: Cascade)
+  requesterId Int
+  addressee   User     @relation("Addressees", fields: [addresseeId], references: [id], onDelete: Cascade)
+  addresseeId Int
+  status      String   @default("pending")
+  created_at  DateTime @default(now())
+
+  @@unique([requesterId, addresseeId])
+}
