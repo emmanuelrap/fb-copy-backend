@@ -1,5 +1,5 @@
 import express from "express";
-import { getUsers, createUser, authUser, getUserWithPostsAndFriends, logoutUser, pingUserConnection, deleteUser } from "../controllers/usersController.js";
+import { getUsers, createUser, authUser, getUserWithPostsAndFriends, logoutUser, pingUserConnection, deleteUser, updateUser } from "../controllers/usersController.js";
 
 const router = express.Router();
 
@@ -10,5 +10,6 @@ router.post("/login", authUser);
 router.post("/logout", logoutUser);
 router.post("/ping", pingUserConnection);
 router.delete("/:id", deleteUser);
+router.patch("/:id", updateUser);
 
 export default router;

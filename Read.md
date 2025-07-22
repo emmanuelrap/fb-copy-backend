@@ -22,3 +22,12 @@ npm start
 # CLOUDNARY
 
 npm install cloudinary multer
+
+# Pare deployar
+
+1.- Crear una variable de la BD a la que apunta
+2.- heroku addons:create heroku-postgresql:hobby-dev --app tu-nombre-de-app
+
+2.- heroku config --app tu-nombre-de-app
+heroku config --app fb-copy-backend
+3.- verificar: heroku config --app tu-nombre-de-app

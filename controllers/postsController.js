@@ -1,109 +1,152 @@
-import prisma from "../prisma/prismaClient.js";
+import pool from "../config/db.js";
 
 export const getAllPosts = async (req, res) => {
+	console.log("[ejecución] getAllPosts()");
 	try {
-		const posts = await prisma.post.findMany({
-			include: {
-				user: {
-					select: {
-						id: true,
-						full_name: true,
-						avatar_url: true,
-					},
-				},
-				likes: {
-					include: {
-						user: {
-							select: {
-								id: true,
-								full_name: true,
-								avatar_url: true,
-							},
-						},
-					},
-				},
-				comments: {
-					include: {
-						user: {
-							select: {
-								id: true,
-								full_name: true,
-								avatar_url: true,
-							},
-						},
-					},
-				},
-			},
-		});
+		const postsRes = await pool.query(`
+			SELECT 
+				p.id, p.userid, p.text_content, p.media_url, p.media_type, p.created_at,
+				u.full_name AS user_full_name, u.avatar_url AS user_avatar_url
+			FROM posts p
+			JOIN users u ON p.userid = u.id
+			ORDER BY p.created_at DESC
+		`);
+		const posts = postsRes.rows;
+
+		// Para cada post, obtener likes y comments
+		for (const post of posts) {
+			const likesRes = await pool.query(
+				`
+				SELECT l.id, l.postid, l.userid,l.created_at, u.full_name, u.avatar_url
+				FROM likes l
+				JOIN users u ON l.userid = u.id
+				WHERE l.postid = $1
+			`,
+				[post.id]
+			);
+			post.likes = likesRes.rows;
+
+			const commentsRes = await pool.query(
+				`
+				SELECT c.id, c.content, c.userid, u.full_name, u.avatar_url, c.created_at
+				FROM comments c
+				JOIN users u ON c.userid = u.id
+				WHERE c.postid = $1
+				ORDER BY c.created_at ASC
+			`,
+				[post.id]
+			);
+			post.comments = commentsRes.rows;
+
+			//contamos los likes y los comentarios para no hacerlo en el front
+			post.likesCount = post.likes.length;
+			post.commentsCount = post.comments.length;
+
+			// Agrupa la info del usuario
+			post.user = {
+				id: post.userid,
+				full_name: post.user_full_name,
+				avatar_url: post.user_avatar_url,
+			};
+
+			// Limpia campos redundantes
+			delete post.userid;
+			delete post.user_full_name;
+			delete post.user_avatar_url;
+		}
 
 		res.json(posts);
 	} catch (error) {
 		console.error("Error fetching posts:", error);
-		res.status(500).json({ error: "Error fetching posts" });
+		res.status(500).json({ error: "Error interno del servidor" });
 	}
 };
 
 export const getPostsPaginated = async (req, res) => {
+	console.log("[ejecución] getPostsPaginated()");
 	try {
-		// Parámetros de query, con valores por defecto
 		const page = parseInt(req.query.page) || 1;
 		const limit = parseInt(req.query.limit) || 10;
+		const offset = (page - 1) * limit;
 
-		// Cálculo de skip
-		const skip = (page - 1) * limit;
+		const postsRes = await pool.query(
+			`
+			SELECT 
+				p.id, p.userid, p.text_content, p.media_url, p.media_type, p.created_at,
+				u.full_name AS user_full_name, u.avatar_url AS user_avatar_url
+			FROM posts p
+			JOIN users u ON p.userid = u.id
+			ORDER BY p.created_at DESC
+			LIMIT $1 OFFSET $2
+		`,
+			[limit, offset]
+		);
 
-		const posts = await prisma.post.findMany({
-			skip,
-			take: limit,
-			include: {
-				user: {
-					select: {
-						id: true,
-						full_name: true,
-						avatar_url: true,
-					},
-				},
-				likes: {
-					include: {
-						user: {
-							select: {
-								id: true,
-								full_name: true,
-								avatar_url: true,
-							},
-						},
-					},
-				},
-				comments: {
-					include: {
-						user: {
-							select: {
-								id: true,
-								full_name: true,
-								avatar_url: true,
-							},
-						},
-					},
-				},
-			},
-		});
+		const posts = postsRes.rows;
+
+		for (const post of posts) {
+			const likesRes = await pool.query(
+				`
+				SELECT l.id, l.postid, l.userid,l.created_at, u.full_name, u.avatar_url
+				FROM likes l
+				JOIN users u ON l.userid = u.id
+				WHERE l.postid = $1
+			`,
+				[post.id]
+			);
+			post.likes = likesRes.rows;
+
+			const commentsRes = await pool.query(
+				`
+				SELECT c.id, c.content, c.userid, u.full_name, u.avatar_url, c.created_at
+				FROM comments c
+				JOIN users u ON c.userid = u.id
+				WHERE c.postid = $1
+				ORDER BY c.created_at ASC
+			`,
+				[post.id]
+			);
+			post.comments = commentsRes.rows;
+
+			//contamos los likes y los comentarios para no hacerlo en el front
+			post.likesCount = post.likes.length;
+			post.commentsCount = post.comments.length;
+
+			post.user = {
+				id: post.userid,
+				full_name: post.user_full_name,
+				avatar_url: post.user_avatar_url,
+			};
+			delete post.userid;
+			delete post.user_full_name;
+			delete post.user_avatar_url;
+		}
 
 		res.json(posts);
 	} catch (error) {
 		console.error("Error fetching paginated posts:", error);
-		res.status(500).json({ error: "Error fetching posts" });
+		res.status(500).json({ error: "Error interno del servidor" });
 	}
 };
 
 export const createPost = async (req, res) => {
-	console.log("[ejecucion] createPost()");
-	const { userId, text_content, media_url, media_type } = req.body;
+	console.log("[ejecucion] createPost()", req.body);
+	const { userid, text_content, media_url, media_type } = req.body;
+
 	try {
-		const post = await prisma.post.create({
-			data: { userId, text_content, media_url, media_type },
-		});
-		res.status(201).json(post);
-	} catch (err) {
-		res.status(400).json({ error: err.message });
+		const insertQuery = `
+			INSERT INTO posts (userid, text_content, media_url, media_type, created_at)
+			VALUES ($1, $2, $3, $4, NOW())
+			RETURNING *;
+		`;
+
+		const values = [userid, text_content, media_url, media_type];
+
+		const { rows } = await pool.query(insertQuery, values);
+
+		res.status(201).json(rows[0]);
+	} catch (error) {
+		console.error("Error creando post:", error);
+		res.status(400).json({ error: error.message });
 	}
 };

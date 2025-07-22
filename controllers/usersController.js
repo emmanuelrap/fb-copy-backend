@@ -1,73 +1,73 @@
-import prisma from "../prisma/prismaClient.js";
+import pool from "../config/db.js";
+import { mapUserFromDb } from "../models/userModel.js";
 
 export const getUsers = async (req, res) => {
-	const users = await prisma.user.findMany();
-	res.json(users);
+	console.log("[ejecución] getUsers()");
+	try {
+		const { rows } = await pool.query("SELECT * FROM users");
+
+		res.json(rows);
+	} catch (error) {
+		console.error("Error fetching users:", error);
+		res.status(500).json({ error: "Error interno del servidor" });
+	}
 };
 
 export const getUserWithPostsAndFriends = async (req, res) => {
-	console.log("getUserWithPostsAndFriends()");
+	console.log("[ejecución] getUserWithPostsAndFriends()");
 	try {
-		const userId = parseInt(req.params.id);
+		const userid = parseInt(req.params.id);
+		if (isNaN(userid)) return res.status(400).json({ message: "ID inválido" });
 
-		const user = await prisma.user.findUnique({
-			where: { id: userId },
-			select: {
-				id: true,
-				username: true,
-				email: true,
-				full_name: true,
-				avatar_url: true,
-				cover_photo_url: true,
-				created_at: true,
-				posts: {
-					select: {
-						id: true,
-						text_content: true,
-						media_url: true,
-						media_type: true,
-						created_at: true,
-					},
-				},
-				friendshipsSent: {
-					where: { status: "accepted" },
-					select: {
-						addressee: {
-							select: {
-								id: true,
-								full_name: true,
-								username: true,
-								avatar_url: true,
-							},
-						},
-					},
-				},
-				friendshipsReceived: {
-					where: { status: "accepted" },
-					select: {
-						requester: {
-							select: {
-								id: true,
-								full_name: true,
-								username: true,
-								avatar_url: true,
-							},
-						},
-					},
-				},
-			},
+		// Obtener usuario
+		const userRes = await pool.query(
+			`SELECT id, username, email, full_name, avatar_url, cover_photo_url, created_at
+       FROM users WHERE id = $1`,
+			[userid]
+		);
+		const user = userRes.rows[0];
+		if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
+
+		// Obtener posts del usuario
+		const postsRes = await pool.query(
+			`SELECT id, userid, text_content, media_url, media_type, created_at
+   FROM posts
+   WHERE userid = $1
+   ORDER BY id DESC`,
+			[userid]
+		);
+		const posts = postsRes.rows;
+
+		// todo Obtener amigos (amistades aceptadas)
+		const sentRes = await pool.query(
+			`SELECT u.id, u.full_name, u.username, u.avatar_url
+       FROM friendships f
+       JOIN users u ON f.addresseeid = u.id
+       WHERE f.requesterid = $1 AND f.status = 'accepted'`,
+			[userid]
+		);
+
+		// Amigos que recibieron la solicitud
+		const receivedRes = await pool.query(
+			`SELECT u.id, u.full_name, u.username, u.avatar_url
+       FROM friendships f
+       JOIN users u ON f.requesterid = u.id
+       WHERE f.addresseeid = $1 AND f.status = 'accepted'`,
+			[userid]
+		);
+
+		//const friends = [...sentRes.rows, ...receivedRes.rows];
+		//TODO por el momento todos son amigos de todos
+		const { rows: friends } = await pool.query("SELECT * FROM users");
+
+		//agregar el nombre a los post
+		posts.forEach((post) => {
+			post.user = user;
 		});
-
-		if (!user) {
-			return res.status(404).json({ message: "Usuario no encontrado" });
-		}
-
-		const friends = [...user.friendshipsSent.map((f) => f.addressee), ...user.friendshipsReceived.map((f) => f.requester)];
 
 		res.json({
 			...user,
-			friendshipsSent: undefined,
-			friendshipsReceived: undefined,
+			posts,
 			friends,
 		});
 	} catch (error) {
@@ -79,44 +79,59 @@ export const getUserWithPostsAndFriends = async (req, res) => {
 export const createUser = async (req, res) => {
 	console.log("[ejecucion] createUser()", req.body);
 	const { username, email, password, full_name, avatar_url, cover_photo_url } = req.body;
+
 	try {
-		const newUser = await prisma.user.create({
-			data: { username, email, password, full_name, avatar_url, cover_photo_url },
-		});
-		res.json(newUser);
+		const insertQuery = `
+      INSERT INTO users (username, email, password, full_name, avatar_url, cover_photo_url, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      RETURNING *;
+    `;
+
+		const values = [username, email, password, full_name, avatar_url, cover_photo_url];
+
+		const { rows } = await pool.query(insertQuery, values);
+
+		res.json(rows[0]);
 	} catch (error) {
+		console.error("Error creando usuario:", error);
 		res.status(400).json({ error: error.message });
 	}
 };
 
 export const authUser = async (req, res) => {
-	const { email, password } = req.body;
+	console.log("[ejecución] authUser()");
+	const { email, password, lastconnection } = req.body;
 
 	try {
-		const user = await prisma.user.findUnique({
-			where: { email },
-		});
-
-		if (!user) {
-			return res.status(404).json({ error: "Usuario no encontrado" });
-		}
+		const userRes = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
+		const user = userRes.rows[0];
+		if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
 		if (user.password !== password) {
 			return res.status(401).json({ error: "Contraseña incorrecta" });
 		}
 
-		// Aquí actualizamos isOnline a true
-		const updatedUser = await prisma.user.update({
-			where: { id: user.id },
-			data: { isOnline: true },
-		});
+		// ✅ Actualizar isOnline y lastconnection
+		const updateRes = await pool.query(
+			`UPDATE users SET isonline = TRUE, lastconnection = $2 WHERE id = $1 
+			 RETURNING id, username, full_name, avatar_url, cover_photo_url, isonline, lastconnection`,
+			[user.id, lastconnection]
+		);
 
-		// Opcional: puedes devolver solo lo necesario
-		const { id, username, full_name, avatar_url, cover_photo_url, isOnline } = updatedUser;
+		const updatedUser = updateRes.rows[0];
 
-		return res.json({
+		res.json({
 			message: "Autenticación exitosa",
-			user: { id, email, username, full_name, avatar_url, cover_photo_url, isOnline },
+			user: {
+				id: updatedUser.id,
+				email,
+				username: updatedUser.username,
+				full_name: updatedUser.full_name,
+				avatar_url: updatedUser.avatar_url,
+				cover_photo_url: updatedUser.cover_photo_url,
+				isOnline: updatedUser.isonline,
+				lastConnection: updatedUser.lastconnection,
+			},
 		});
 	} catch (error) {
 		console.error("Error en authUser:", error);
@@ -125,52 +140,51 @@ export const authUser = async (req, res) => {
 };
 
 export const deleteUser = async (req, res) => {
+	console.log("[ejecución] deleteUser()");
 	const id = parseInt(req.params.id);
-	if (isNaN(id)) {
-		return res.status(400).json({ error: "ID inválido" });
-	}
+	if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
 
 	try {
-		// Intentar eliminar directamente:
-		await prisma.user.delete({ where: { id } });
-		return res.json({ message: "Usuario eliminado correctamente" });
-	} catch (error) {
-		// Si error es porque no encontró el usuario, responde 404
-		if (error.code === "P2025") {
-			// Código de Prisma para "Record to delete does not exist"
+		const deleteRes = await pool.query(`DELETE FROM users WHERE id = $1 RETURNING *`, [id]);
+
+		if (deleteRes.rowCount === 0) {
 			return res.status(404).json({ error: "Usuario no encontrado" });
 		}
+
+		res.json({ message: "Usuario eliminado correctamente" });
+	} catch (error) {
 		console.error("Error eliminando usuario:", error);
-		return res.status(500).json({ error: "Error interno del servidor" });
+		res.status(500).json({ error: "Error interno del servidor" });
 	}
 };
 
 export const logoutUser = async (req, res) => {
-	const { email } = req.body;
+	const { email, lastConnection } = req.body;
 
 	try {
-		const user = await prisma.user.findUnique({
-			where: { email },
-		});
+		const userRes = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
+		const user = userRes.rows[0];
+		if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-		if (!user) {
-			return res.status(404).json({ error: "Usuario no encontrado" });
-		}
+		const updateRes = await pool.query(
+			`UPDATE users SET isonline = FALSE, lastconnection = $1 WHERE id = $2 RETURNING id, username, full_name, avatar_url, cover_photo_url, isonline, lastconnection`,
+			[lastConnection, user.id]
+		);
 
-		// Actualizamos isOnline a false y lastConnection a ahora
-		const updatedUser = await prisma.user.update({
-			where: { id: user.id },
-			data: {
-				isOnline: false,
-				lastConnection: new Date(),
-			},
-		});
+		const updatedUser = updateRes.rows[0];
 
-		const { id, username, full_name, avatar_url, cover_photo_url, isOnline, lastConnection } = updatedUser;
-
-		return res.json({
+		res.json({
 			message: "Sesión cerrada correctamente",
-			user: { id, email, username, full_name, avatar_url, cover_photo_url, isOnline, lastConnection },
+			user: {
+				id: updatedUser.id,
+				email,
+				username: updatedUser.username,
+				full_name: updatedUser.full_name,
+				avatar_url: updatedUser.avatar_url,
+				cover_photo_url: updatedUser.cover_photo_url,
+				isOnline: updatedUser.isonline,
+				lastConnection: updatedUser.lastconnection,
+			},
 		});
 	} catch (error) {
 		console.error("Error en logoutUser:", error);
@@ -178,28 +192,56 @@ export const logoutUser = async (req, res) => {
 	}
 };
 
-export const pingUserConnection = async (req, res) => {
-	const { userId } = req.body;
+export const updateUser = async (req, res) => {
+	console.log("[ejecución] updateUser()");
+	const userId = parseInt(req.params.id);
+	if (isNaN(userId)) {
+		return res.status(400).json({ error: "ID inválido" });
+	}
+
+	const allowedFields = ["username", "email", "full_name", "avatar_url", "cover_photo_url", "isonline"]; // campos permitidos
+	const fieldsToUpdate = Object.entries(req.body).filter(([key]) => allowedFields.includes(key));
+
+	if (fieldsToUpdate.length === 0) {
+		return res.status(400).json({ error: "No hay campos válidos para actualizar" });
+	}
+
+	// Construir consulta dinámica
+	const setClauses = fieldsToUpdate.map(([key], index) => `${key} = $${index + 1}`).join(", ");
+	const values = fieldsToUpdate.map(([, value]) => value);
 
 	try {
-		const updatedUser = await prisma.user.update({
-			where: { id: userId },
-			data: {
-				isOnline: true,
-				lastConnection: new Date(),
-			},
-		});
+		const result = await pool.query(`UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING *`, [...values, userId]);
 
-		return res.json({
+		if (result.rowCount === 0) {
+			return res.status(404).json({ error: "Usuario no encontrado" });
+		}
+
+		res.json({ message: "Usuario actualizado correctamente", user: result.rows[0] });
+	} catch (error) {
+		console.error("Error actualizando usuario:", error);
+		res.status(500).json({ error: "Error interno del servidor" });
+	}
+};
+
+export const pingUserConnection = async (req, res) => {
+	console.log("[ejecución] pingUserConnection()");
+	const { userid, lastconnection } = req.body;
+
+	try {
+		const updateRes = await pool.query(`UPDATE users SET isonline = TRUE, lastconnection = $2 WHERE id = $1 RETURNING id, isonline, lastconnection`, [userid, lastconnection]);
+		const updatedUser = updateRes.rows[0];
+
+		res.json({
 			message: "Ping recibido",
 			user: {
 				id: updatedUser.id,
-				isOnline: updatedUser.isOnline,
-				lastConnection: updatedUser.lastConnection,
+				isOnline: updatedUser.isonline,
+				lastConnection: updatedUser.lastconnection,
 			},
 		});
 	} catch (error) {
 		console.error("Error en ping:", error);
-		return res.status(500).json({ error: "Error actualizando ping" });
+		res.status(500).json({ error: "Error actualizando ping" });
 	}
 };

@@ -1,11 +1,13 @@
-import { Pool } from "pg";
+import dotenv from "dotenv";
+dotenv.config();
+
+import pkg from "pg";
+const { Pool } = pkg;
+
+console.log("DATABASE_URL desde db.js:", process.env.DATABASE_URL); // 👈
 
 const pool = new Pool({
-	user: "postgres",
-	host: "localhost",
-	database: "db_facebook",
-	password: "cacahuateZ1$",
-	port: 5432,
+	connectionString: process.env.DATABASE_URL,
 });
 
 export default pool;
