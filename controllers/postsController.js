@@ -1,5 +1,73 @@
 import pool from "../config/db.js";
 
+export const getPostById = async (req, res) => {
+	console.log("[ejecución] getPostById()");
+	const { id } = req.params;
+
+	try {
+		const postRes = await pool.query(
+			`
+			SELECT 
+				p.id, p.userid, p.text_content, p.media_url, p.media_type, p.created_at,
+				u.full_name AS user_full_name, u.avatar_url AS user_avatar_url
+			FROM posts p
+			JOIN users u ON p.userid = u.id
+			WHERE p.id = $1
+		`,
+			[id]
+		);
+
+		if (postRes.rows.length === 0) {
+			return res.status(404).json({ error: "Post no encontrado" });
+		}
+
+		const post = postRes.rows[0];
+
+		// Obtener likes
+		const likesRes = await pool.query(
+			`
+			SELECT l.id, l.postid, l.userid, l.created_at, u.full_name, u.avatar_url
+			FROM likes l
+			JOIN users u ON l.userid = u.id
+			WHERE l.postid = $1
+		`,
+			[id]
+		);
+		post.likes = likesRes.rows;
+
+		// Obtener comentarios
+		const commentsRes = await pool.query(
+			`
+			SELECT c.id, c.content, c.userid, u.full_name, u.avatar_url, c.created_at
+			FROM comments c
+			JOIN users u ON c.userid = u.id
+			WHERE c.postid = $1
+			ORDER BY c.created_at ASC
+		`,
+			[id]
+		);
+		post.comments = commentsRes.rows;
+
+		post.likesCount = post.likes.length;
+		post.commentsCount = post.comments.length;
+
+		post.user = {
+			id: post.userid,
+			full_name: post.user_full_name,
+			avatar_url: post.user_avatar_url,
+		};
+
+		delete post.userid;
+		delete post.user_full_name;
+		delete post.user_avatar_url;
+
+		res.json(post);
+	} catch (error) {
+		console.error("Error al obtener el post:", error);
+		res.status(500).json({ error: "Error interno del servidor" });
+	}
+};
+
 export const getAllPosts = async (req, res) => {
 	console.log("[ejecución] getAllPosts()");
 	try {
@@ -148,5 +216,37 @@ export const createPost = async (req, res) => {
 	} catch (error) {
 		console.error("Error creando post:", error);
 		res.status(400).json({ error: error.message });
+	}
+};
+
+export const deletePost = async (req, res) => {
+	console.log("[ejecución] deletePost()");
+	const { id } = req.params;
+
+	try {
+		const deleteQuery = `
+			DELETE FROM posts
+			WHERE id = $1 RETURNING *;
+		`;
+		const { rows } = await pool.query(deleteQuery, [id]);
+
+		if (rows.length === 0) {
+			return res.status(404).json({
+				success: false,
+				message: "post no encontrado",
+			});
+		}
+
+		res.json({
+			success: true,
+			message: "post eliminado correctamente",
+			post: rows[0],
+		});
+	} catch (error) {
+		console.error("Error eliminando post:", error);
+		res.status(500).json({
+			success: false,
+			error: "Error interno del servidor",
+		});
 	}
 };

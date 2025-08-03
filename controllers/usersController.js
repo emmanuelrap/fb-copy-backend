@@ -100,7 +100,7 @@ export const createUser = async (req, res) => {
 
 export const authUser = async (req, res) => {
 	console.log("[ejecución] authUser()");
-	const { email, password, lastconnection } = req.body;
+	const { email, password } = req.body;
 
 	try {
 		const userRes = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
@@ -111,11 +111,12 @@ export const authUser = async (req, res) => {
 			return res.status(401).json({ error: "Contraseña incorrecta" });
 		}
 
-		// ✅ Actualizar isOnline y lastconnection
+		// ✅ Actualizar isOnline y lastconnection con la hora actual del servidor
+		const now = new Date();
 		const updateRes = await pool.query(
 			`UPDATE users SET isonline = TRUE, lastconnection = $2 WHERE id = $1 
 			 RETURNING id, username, full_name, avatar_url, cover_photo_url, isonline, lastconnection`,
-			[user.id, lastconnection]
+			[user.id, now]
 		);
 
 		const updatedUser = updateRes.rows[0];
@@ -159,16 +160,19 @@ export const deleteUser = async (req, res) => {
 };
 
 export const logoutUser = async (req, res) => {
-	const { email, lastConnection } = req.body;
+	const { email } = req.body;
 
 	try {
 		const userRes = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
 		const user = userRes.rows[0];
 		if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
+		// ✅ Usar fecha actual para lastconnection
+		const now = new Date();
 		const updateRes = await pool.query(
-			`UPDATE users SET isonline = FALSE, lastconnection = $1 WHERE id = $2 RETURNING id, username, full_name, avatar_url, cover_photo_url, isonline, lastconnection`,
-			[lastConnection, user.id]
+			`UPDATE users SET isonline = FALSE, lastconnection = $1 WHERE id = $2 
+			 RETURNING id, username, full_name, avatar_url, cover_photo_url, isonline, lastconnection`,
+			[now, user.id]
 		);
 
 		const updatedUser = updateRes.rows[0];
@@ -226,10 +230,11 @@ export const updateUser = async (req, res) => {
 
 export const pingUserConnection = async (req, res) => {
 	console.log("[ejecución] pingUserConnection()");
-	const { userid, lastconnection } = req.body;
+	const { userid } = req.body;
 
 	try {
-		const updateRes = await pool.query(`UPDATE users SET isonline = TRUE, lastconnection = $2 WHERE id = $1 RETURNING id, isonline, lastconnection`, [userid, lastconnection]);
+		const now = new Date();
+		const updateRes = await pool.query(`UPDATE users SET isonline = TRUE, lastconnection = $2 WHERE id = $1 RETURNING id, isonline, lastconnection`, [userid, now]);
 		const updatedUser = updateRes.rows[0];
 
 		res.json({
